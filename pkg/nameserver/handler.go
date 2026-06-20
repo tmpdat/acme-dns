@@ -45,7 +45,8 @@ func (n *Nameserver) readQuery(m *dns.Msg) {
 	}
 	m.Authoritative = authoritative
 	if authoritative {
-		if m.Rcode == dns.RcodeNameError {
+		if m.Rcode == dns.RcodeNameError ||
+			(m.Rcode == dns.RcodeSuccess && len(m.Answer) == 0) {
 			m.Ns = append(m.Ns, n.SOA)
 		}
 	}
@@ -57,7 +58,7 @@ func (n *Nameserver) answer(q dns.Question) ([]dns.RR, int, bool, error) {
 	var txtRRs []dns.RR
 	loweredName := strings.ToLower(q.Name)
 	var authoritative = n.isAuthoritative(loweredName)
-	if !n.isOwnChallenge(loweredName) && !n.answeringForDomain(loweredName) {
+	if !n.isOwnChallenge(loweredName) && !n.answeringForDomain(loweredName) && !n.hasTXTForDomain(q) {
 		rcode = dns.RcodeNameError
 	}
 	r, _ := n.getRecord(loweredName, q.Qtype)
@@ -136,6 +137,18 @@ func (n *Nameserver) answeringForDomain(name string) bool {
 	}
 	_, ok := n.Domains[name]
 	return ok
+}
+
+// hasTXTForDomain checks if we have TXT records for a domain.
+func (n *Nameserver) hasTXTForDomain(q dns.Question) bool {
+	subdomain := sanitizeDomainQuestion(q.Name)
+	txts, err := n.DB.GetTXTForDomain(subdomain)
+	if err != nil {
+		n.Logger.Debugw("Error while trying to get record",
+			"error", err.Error())
+		return false
+	}
+	return len(txts) > 0
 }
 
 func (n *Nameserver) getRecord(name string, qtype uint16) ([]dns.RR, error) {
